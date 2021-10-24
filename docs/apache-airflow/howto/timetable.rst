@@ -283,3 +283,42 @@ The *Schedule* column would say ``after each workday, at 08:00:00``.
     Module :mod:`airflow.timetables.base`
         The public interface is heavily documented to explain what should be
         implemented by subclasses.
+
+
+Timetable Description Display in UI
+-----------------------------------
+
+You can also provide a description for your Timetable Implementation
+by overriding the ``description`` property.
+This is especially useful for providing comprehensive description for your implentation in UI.
+For our ``SometimeAfterWorkdayTimetable`` class, for example, we could have:
+
+This is specially useful when you want to provide comprehensive description which is different from ``summary`` property.
+
+.. code-block:: python
+
+    description = "Schedule: after each workday, at {self._schedule_at}"
+
+You can also wrap this inside ``__init__``, if you want to derive description.
+
+.. code-block:: python
+
+    def __init__(self) -> None:
+      self.description = "Schedule: after each workday, at {self._schedule_at}"
+
+So for a DAG declared like this:
+
+.. code-block:: python
+
+    with DAG(
+        timetable=SometimeAfterWorkdayTimetable(Time(8)),  # 8am.
+        ...,
+    ) as dag:
+        ...
+
+The *i* icon  would say ``Schedule: after each workday, at 08:00:00``.
+
+
+.. seealso::
+    Module :mod:`airflow.timetables.interval`
+        check ``CronDataIntervalTimetable`` description implementation which provides comprehensive cron description in UI.
