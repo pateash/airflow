@@ -290,7 +290,7 @@ Timetable Description Display in UI
 
 You can also provide a description for your Timetable Implementation
 by overriding the ``description`` property.
-This is especially useful for providing comprehensive description for your implentation in UI.
+This is especially useful for providing comprehensive description for your implementation in UI.
 For our ``SometimeAfterWorkdayTimetable`` class, for example, we could have:
 
 This is specially useful when you want to provide comprehensive description which is different from ``summary`` property.
@@ -304,7 +304,7 @@ You can also wrap this inside ``__init__``, if you want to derive description.
 .. code-block:: python
 
     def __init__(self) -> None:
-      self.description = "Schedule: after each workday, at {self._schedule_at}"
+        self.description = "Schedule: after each workday, at {self._schedule_at}"
 
 So for a DAG declared like this:
 

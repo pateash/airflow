@@ -2692,7 +2692,7 @@ class DagModel(Base):
     # Timetable/Schedule Interval description
     timetable_description = Column(String(1000), nullable=True)
 
-# Tags for view filter
+    # Tags for view filter
     tags = relationship('DagTag', cascade='all,delete-orphan', backref=backref('dag'))
 
     max_active_tasks = Column(Integer, nullable=False)
