@@ -131,7 +131,7 @@ class CronDataIntervalTimetable(_DataIntervalTimetable):
         try:
             # checking for more than 5 parameters in Cron and avoiding evaluation for now,
             # as Croniter has inconsistent evaluation with other libraries
-            if self._expression.count(" ") > 4:
+            if len(croniter(self._expression).expanded) > 5:
                 raise FormatException()
             interval_description = descriptor.get_description()
         except (FormatException, MissingFieldException):

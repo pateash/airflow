@@ -2689,7 +2689,10 @@ class DagModel(Base):
     default_view = Column(String(25))
     # Schedule interval
     schedule_interval = Column(Interval)
-    # Tags for view filter
+    # Timetable/Schedule Interval description
+    timetable_description = Column(String(1000), nullable=True)
+
+# Tags for view filter
     tags = relationship('DagTag', cascade='all,delete-orphan', backref=backref('dag'))
 
     max_active_tasks = Column(Integer, nullable=False)
@@ -2707,7 +2710,6 @@ class DagModel(Base):
     # Earliest time at which this ``next_dagrun`` can be created.
     next_dagrun_create_after = Column(UtcDateTime)
 
-    timetable_description = Column(String, nullable=True)
     __table_args__ = (
         Index('idx_root_dag_id', root_dag_id, unique=False),
         Index('idx_next_dagrun_create_after', next_dagrun_create_after, unique=False),

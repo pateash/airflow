@@ -53,9 +53,7 @@ class NullTimetable(_TrivialTimetable):
 
     This corresponds to ``schedule_interval=None``.
     """
-
-    def __init__(self) -> None:
-        self.description = "Never, external triggers only"
+    description: Optional[str] = "Never, external triggers only"
 
     @property
     def summary(self) -> str:
@@ -75,9 +73,7 @@ class OnceTimetable(_TrivialTimetable):
 
     This corresponds to ``schedule_interval="@once"``.
     """
-
-    def __init__(self) -> None:
-        self.description = "Once, as soon as possible"
+    description: Optional[str] = "Once, as soon as possible"
 
     @property
     def summary(self) -> str:
