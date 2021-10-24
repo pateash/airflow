@@ -104,9 +104,10 @@ class Timetable(Protocol):
     """Protocol that all Timetable classes are expected to implement."""
 
     description: Optional[str] = None
-    """Describes the timetable interval,
-    eg. for  CronDataIntervalTimetable ``'30 21 * * 5'``,
-    description could be like ``'At 21:30, only on Friday'``, This is used in the webserver UI.
+    """Human-readable description of the timetable.
+
+    For example, this can produce something like ``'At 21:30, only on Friday'``
+    from the cron expression ``'30 21 * * 5'``. This is used in the webserver UI.
     """
 
     periodic: bool = True
