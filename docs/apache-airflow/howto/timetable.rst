@@ -293,11 +293,9 @@ by overriding the ``description`` property.
 This is especially useful for providing comprehensive description for your implementation in UI.
 For our ``SometimeAfterWorkdayTimetable`` class, for example, we could have:
 
-This is specially useful when you want to provide comprehensive description which is different from ``summary`` property.
-
 .. code-block:: python
 
-    description = "Schedule: after each workday, at {self._schedule_at}"
+    description = "Schedule: after each workday, at {_schedule_at}"
 
 You can also wrap this inside ``__init__``, if you want to derive description.
 
@@ -305,6 +303,9 @@ You can also wrap this inside ``__init__``, if you want to derive description.
 
     def __init__(self) -> None:
         self.description = "Schedule: after each workday, at {self._schedule_at}"
+
+
+This is specially useful when you want to provide comprehensive description which is different from ``summary`` property.
 
 So for a DAG declared like this:
 
@@ -316,7 +317,7 @@ So for a DAG declared like this:
     ) as dag:
         ...
 
-The *i* icon  would say ``Schedule: after each workday, at 08:00:00``.
+The *i* icon  would show,  ``Schedule: after each workday, at 08:00:00``.
 
 
 .. seealso::
