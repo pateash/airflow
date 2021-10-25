@@ -135,7 +135,7 @@ class CronDataIntervalTimetable(_DataIntervalTimetable):
                 raise FormatException()
             interval_description = descriptor.get_description()
         except (FormatException, MissingFieldException):
-            interval_description = None
+            interval_description = ""
         self.description = interval_description
 
     @classmethod
