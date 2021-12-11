@@ -19,7 +19,7 @@
 """Added timetable description column
 
 Revision ID: 786e3737b18f
-Revises: 7b2661a43ba3
+Revises: 5e3ec427fdd3
 Create Date: 2021-10-15 13:33:04.754052
 
 """
@@ -29,7 +29,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '786e3737b18f'
-down_revision = '7b2661a43ba3'
+down_revision = '5e3ec427fdd3'
 branch_labels = None
 depends_on = None
 
