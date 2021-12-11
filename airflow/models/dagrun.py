@@ -15,9 +15,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import os
 import warnings
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Iterable, List, NamedTuple, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, NamedTuple, Optional, Tuple, Union
 
 from sqlalchemy import (
     Boolean,
@@ -48,10 +49,10 @@ from airflow.ti_deps.dep_context import DepContext
 from airflow.ti_deps.dependencies_states import SCHEDULEABLE_STATES
 from airflow.utils import callback_requests, timezone
 from airflow.utils.log.logging_mixin import LoggingMixin
-from airflow.utils.session import provide_session
+from airflow.utils.session import NEW_SESSION, provide_session
 from airflow.utils.sqlalchemy import UtcDateTime, nulls_first, skip_locked, with_row_locks
 from airflow.utils.state import DagRunState, State, TaskInstanceState
-from airflow.utils.types import DagRunType
+from airflow.utils.types import NOTSET, ArgNotSet, DagRunType
 
 if TYPE_CHECKING:
     from airflow.models.dag import DAG
@@ -75,8 +76,6 @@ class DagRun(Base, LoggingMixin):
 
     __tablename__ = "dag_run"
 
-    __NO_VALUE = object()
-
     id = Column(Integer, primary_key=True)
     dag_id = Column(String(ID_LEN, **COLLATION_ARGS), nullable=False)
     queued_at = Column(UtcDateTime)
@@ -96,7 +95,11 @@ class DagRun(Base, LoggingMixin):
     last_scheduling_decision = Column(UtcDateTime)
     dag_hash = Column(String(32))
 
-    dag = None
+    # Remove this `if` after upgrading Sphinx-AutoAPI
+    if not TYPE_CHECKING and "BUILDING_AIRFLOW_DOCS" in os.environ:
+        dag: "Optional[DAG]"
+    else:
+        dag: "Optional[DAG]" = None
 
     __table_args__ = (
         Index('dag_id_state', dag_id, _state),
@@ -138,7 +141,7 @@ class DagRun(Base, LoggingMixin):
         self,
         dag_id: Optional[str] = None,
         run_id: Optional[str] = None,
-        queued_at: Optional[datetime] = __NO_VALUE,
+        queued_at: Union[datetime, None, ArgNotSet] = NOTSET,
         execution_date: Optional[datetime] = None,
         start_date: Optional[datetime] = None,
         external_trigger: Optional[bool] = None,
@@ -161,8 +164,9 @@ class DagRun(Base, LoggingMixin):
         self.start_date = start_date
         self.external_trigger = external_trigger
         self.conf = conf or {}
-        self.state = state
-        if queued_at is self.__NO_VALUE:
+        if state is not None:
+            self.state = state
+        if queued_at is NOTSET:
             self.queued_at = timezone.utcnow() if state == State.QUEUED else None
         else:
             self.queued_at = queued_at
@@ -181,10 +185,16 @@ class DagRun(Base, LoggingMixin):
             external_trigger=self.external_trigger,
         )
 
+    @property
+    def logical_date(self) -> datetime:
+        return self.execution_date
+
     def get_state(self):
         return self._state
 
     def set_state(self, state: DagRunState):
+        if state not in State.dag_states:
+            raise ValueError(f"invalid DagRun state: {state}")
         if self._state != state:
             self._state = state
             self.end_date = timezone.utcnow() if self._state in State.finished else None
@@ -196,7 +206,7 @@ class DagRun(Base, LoggingMixin):
         return synonym('_state', descriptor=property(self.get_state, self.set_state))
 
     @provide_session
-    def refresh_from_db(self, session: Session = None):
+    def refresh_from_db(self, session: Session = NEW_SESSION) -> None:
         """
         Reloads the current dagrun from the database
 
@@ -206,6 +216,22 @@ class DagRun(Base, LoggingMixin):
         dr = session.query(DagRun).filter(DagRun.dag_id == self.dag_id, DagRun.run_id == self.run_id).one()
         self.id = dr.id
         self.state = dr.state
+
+    @classmethod
+    @provide_session
+    def active_runs_of_dags(cls, dag_ids=None, only_running=False, session=None) -> Dict[str, int]:
+        """Get the number of active dag runs for each dag."""
+        query = session.query(cls.dag_id, func.count('*'))
+        if dag_ids is not None:
+            # 'set' called to avoid duplicate dag_ids, but converted back to 'list'
+            # because SQLAlchemy doesn't accept a set here.
+            query = query.filter(cls.dag_id.in_(list(set(dag_ids))))
+        if only_running:
+            query = query.filter(cls.state == State.RUNNING)
+        else:
+            query = query.filter(cls.state.in_([State.RUNNING, State.QUEUED]))
+        query = query.group_by(cls.dag_id)
+        return {dag_id: count for dag_id, count in query.all()}
 
     @classmethod
     def next_dagruns_to_examine(
@@ -265,17 +291,18 @@ class DagRun(Base, LoggingMixin):
             query.limit(max_number), of=cls, session=session, **skip_locked(session=session)
         )
 
-    @staticmethod
+    @classmethod
     @provide_session
     def find(
+        cls,
         dag_id: Optional[Union[str, List[str]]] = None,
         run_id: Optional[str] = None,
-        execution_date: Optional[datetime] = None,
+        execution_date: Optional[Union[datetime, List[datetime]]] = None,
         state: Optional[DagRunState] = None,
         external_trigger: Optional[bool] = None,
         no_backfills: bool = False,
         run_type: Optional[DagRunType] = None,
-        session: Session = None,
+        session: Session = NEW_SESSION,
         execution_start_date: Optional[datetime] = None,
         execution_end_date: Optional[datetime] = None,
     ) -> List["DagRun"]:
@@ -304,35 +331,65 @@ class DagRun(Base, LoggingMixin):
         :param execution_end_date: dag run that was executed until this date
         :type execution_end_date: datetime.datetime
         """
-        DR = DagRun
-
-        qry = session.query(DR)
+        qry = session.query(cls)
         dag_ids = [dag_id] if isinstance(dag_id, str) else dag_id
         if dag_ids:
-            qry = qry.filter(DR.dag_id.in_(dag_ids))
+            qry = qry.filter(cls.dag_id.in_(dag_ids))
         if run_id:
-            qry = qry.filter(DR.run_id == run_id)
+            qry = qry.filter(cls.run_id == run_id)
         if execution_date:
             if isinstance(execution_date, list):
-                qry = qry.filter(DR.execution_date.in_(execution_date))
+                qry = qry.filter(cls.execution_date.in_(execution_date))
             else:
-                qry = qry.filter(DR.execution_date == execution_date)
+                qry = qry.filter(cls.execution_date == execution_date)
         if execution_start_date and execution_end_date:
-            qry = qry.filter(DR.execution_date.between(execution_start_date, execution_end_date))
+            qry = qry.filter(cls.execution_date.between(execution_start_date, execution_end_date))
         elif execution_start_date:
-            qry = qry.filter(DR.execution_date >= execution_start_date)
+            qry = qry.filter(cls.execution_date >= execution_start_date)
         elif execution_end_date:
-            qry = qry.filter(DR.execution_date <= execution_end_date)
+            qry = qry.filter(cls.execution_date <= execution_end_date)
         if state:
-            qry = qry.filter(DR.state == state)
+            qry = qry.filter(cls.state == state)
         if external_trigger is not None:
-            qry = qry.filter(DR.external_trigger == external_trigger)
+            qry = qry.filter(cls.external_trigger == external_trigger)
         if run_type:
-            qry = qry.filter(DR.run_type == run_type)
+            qry = qry.filter(cls.run_type == run_type)
         if no_backfills:
-            qry = qry.filter(DR.run_type != DagRunType.BACKFILL_JOB)
+            qry = qry.filter(cls.run_type != DagRunType.BACKFILL_JOB)
 
-        return qry.order_by(DR.execution_date).all()
+        return qry.order_by(cls.execution_date).all()
+
+    @classmethod
+    @provide_session
+    def find_duplicate(
+        cls,
+        dag_id: str,
+        run_id: str,
+        execution_date: datetime,
+        session: Session = NEW_SESSION,
+    ) -> Optional['DagRun']:
+        """
+        Return an existing run for the DAG with a specific run_id or execution_date.
+
+        *None* is returned if no such DAG run is found.
+
+        :param dag_id: the dag_id to find duplicates for
+        :type dag_id: str
+        :param run_id: defines the run id for this dag run
+        :type run_id: str
+        :param execution_date: the execution date
+        :type execution_date: datetime.datetime
+        :param session: database session
+        :type session: sqlalchemy.orm.session.Session
+        """
+        return (
+            session.query(cls)
+            .filter(
+                cls.dag_id == dag_id,
+                or_(cls.run_id == run_id, cls.execution_date == execution_date),
+            )
+            .one_or_none()
+        )
 
     @staticmethod
     def generate_run_id(run_type: DagRunType, execution_date: datetime) -> str:
@@ -341,7 +398,9 @@ class DagRun(Base, LoggingMixin):
 
     @provide_session
     def get_task_instances(
-        self, state: Optional[Iterable[TaskInstanceState]] = None, session=None
+        self,
+        state: Optional[Iterable[Optional[TaskInstanceState]]] = None,
+        session: Session = NEW_SESSION,
     ) -> Iterable[TI]:
         """Returns the task instances for this dag run"""
         tis = (
@@ -358,7 +417,7 @@ class DagRun(Base, LoggingMixin):
                 tis = tis.filter(TI.state == state)
             else:
                 # this is required to deal with NULL values
-                if None in state:
+                if TaskInstanceState.NONE in state:
                     if all(x is None for x in state):
                         tis = tis.filter(TI.state.is_(None))
                     else:
@@ -372,7 +431,7 @@ class DagRun(Base, LoggingMixin):
         return tis.all()
 
     @provide_session
-    def get_task_instance(self, task_id: str, session: Session = None) -> Optional[TI]:
+    def get_task_instance(self, task_id: str, session: Session = NEW_SESSION) -> Optional[TI]:
         """
         Returns the task instance specified by task_id for this dag run
 
@@ -400,7 +459,7 @@ class DagRun(Base, LoggingMixin):
 
     @provide_session
     def get_previous_dagrun(
-        self, state: Optional[DagRunState] = None, session: Session = None
+        self, state: Optional[DagRunState] = None, session: Session = NEW_SESSION
     ) -> Optional['DagRun']:
         """The previous DagRun, if there is one"""
         filters = [
@@ -412,7 +471,7 @@ class DagRun(Base, LoggingMixin):
         return session.query(DagRun).filter(*filters).order_by(DagRun.execution_date.desc()).first()
 
     @provide_session
-    def get_previous_scheduled_dagrun(self, session: Session = None) -> Optional['DagRun']:
+    def get_previous_scheduled_dagrun(self, session: Session = NEW_SESSION) -> Optional['DagRun']:
         """The previous, SCHEDULED DagRun, if there is one"""
         return (
             session.query(DagRun)
@@ -427,7 +486,7 @@ class DagRun(Base, LoggingMixin):
 
     @provide_session
     def update_state(
-        self, session: Session = None, execute_callbacks: bool = True
+        self, session: Session = NEW_SESSION, execute_callbacks: bool = True
     ) -> Tuple[List[TI], Optional[callback_requests.DagCallbackRequest]]:
         """
         Determines the overall state of the DagRun based on the state
@@ -474,7 +533,7 @@ class DagRun(Base, LoggingMixin):
         # if all roots finished and at least one failed, the run failed
         if not unfinished_tasks and any(leaf_ti.state in State.failed_states for leaf_ti in leaf_tis):
             self.log.error('Marking run %s failed', self)
-            self.set_state(State.FAILED)
+            self.set_state(DagRunState.FAILED)
             if execute_callbacks:
                 dag.handle_callback(self, success=False, reason='task_failure', session=session)
             elif dag.has_on_failure_callback:
@@ -489,7 +548,7 @@ class DagRun(Base, LoggingMixin):
         # if all leaves succeeded and no unfinished tasks, the run succeeded
         elif not unfinished_tasks and all(leaf_ti.state in State.success_states for leaf_ti in leaf_tis):
             self.log.info('Marking run %s successful', self)
-            self.set_state(State.SUCCESS)
+            self.set_state(DagRunState.SUCCESS)
             if execute_callbacks:
                 dag.handle_callback(self, success=True, reason='success', session=session)
             elif dag.has_on_success_callback:
@@ -510,7 +569,7 @@ class DagRun(Base, LoggingMixin):
             and not are_runnable_tasks
         ):
             self.log.error('Deadlock; marking run %s failed', self)
-            self.set_state(State.FAILED)
+            self.set_state(DagRunState.FAILED)
             if execute_callbacks:
                 dag.handle_callback(self, success=False, reason='all_tasks_deadlocked', session=session)
             elif dag.has_on_failure_callback:
@@ -524,7 +583,32 @@ class DagRun(Base, LoggingMixin):
 
         # finally, if the roots aren't done, the dag is still running
         else:
-            self.set_state(State.RUNNING)
+            self.set_state(DagRunState.RUNNING)
+
+        if self._state == DagRunState.FAILED or self._state == DagRunState.SUCCESS:
+            msg = (
+                "DagRun Finished: dag_id=%s, execution_date=%s, run_id=%s, "
+                "run_start_date=%s, run_end_date=%s, run_duration=%s, "
+                "state=%s, external_trigger=%s, run_type=%s, "
+                "data_interval_start=%s, data_interval_end=%s, dag_hash=%s"
+            )
+            self.log.info(
+                msg,
+                self.dag_id,
+                self.execution_date,
+                self.run_id,
+                self.start_date,
+                self.end_date,
+                (self.end_date - self.start_date).total_seconds()
+                if self.start_date and self.end_date
+                else None,
+                self._state,
+                self.external_trigger,
+                self.run_type,
+                self.data_interval_start,
+                self.data_interval_end,
+                self.dag_hash,
+            )
 
         self._emit_true_scheduling_delay_stats_for_finished_state(finished_tasks)
         self._emit_duration_stats_for_finished_state()
@@ -534,7 +618,7 @@ class DagRun(Base, LoggingMixin):
         return schedulable_tis, callback
 
     @provide_session
-    def task_instance_scheduling_decisions(self, session: Session = None) -> TISchedulingDecision:
+    def task_instance_scheduling_decisions(self, session: Session = NEW_SESSION) -> TISchedulingDecision:
 
         schedulable_tis: List[TI] = []
         changed_tis = False
@@ -680,7 +764,7 @@ class DagRun(Base, LoggingMixin):
             Stats.timing(f'dagrun.duration.failed.{self.dag_id}', duration)
 
     @provide_session
-    def verify_integrity(self, session: Session = None):
+    def verify_integrity(self, session: Session = NEW_SESSION):
         """
         Verifies the DagRun by checking for removed tasks or tasks that are not in the
         database yet. It will set state to removed or add the task if required.
@@ -723,7 +807,7 @@ class DagRun(Base, LoggingMixin):
 
             if task.task_id not in task_ids:
                 Stats.incr(f"task_instance_created-{task.task_type}", 1, 1)
-                ti = TI(task, execution_date=None, run_id=self.run_id)
+                ti = TI(task, run_id=self.run_id)
                 task_instance_mutation_hook(ti)
                 session.add(ti)
 
@@ -790,7 +874,7 @@ class DagRun(Base, LoggingMixin):
         )
 
     @provide_session
-    def schedule_tis(self, schedulable_tis: Iterable[TI], session: Session = None) -> int:
+    def schedule_tis(self, schedulable_tis: Iterable[TI], session: Session = NEW_SESSION) -> int:
         """
         Set the given task instances in to the scheduled state.
 

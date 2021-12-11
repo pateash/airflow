@@ -82,6 +82,8 @@ This file contains several service definitions:
 - ``postgres`` - The database.
 - ``redis`` - `The redis <https://redis.io/>`__ - broker that forwards messages from scheduler to worker.
 
+In general, if you want to use airflow locally, your DAGs may try to connect to servers which are running on the host. In order to achieve that, an extra configuration must be added in ``docker-compose.yaml``. For example, on Linux the configuration must be in the section ``services: airflow-worker`` adding ``extra_hosts: - "host.docker.internal:host-gateway"``; and use ``host.docker.internal`` instead of ``localhost``. This configuration vary in different platforms. Please, see documentation for `Windows <https://docs.docker.com/desktop/windows/networking/#use-cases-and-workarounds>`_ and `Mac <https://docs.docker.com/desktop/mac/networking/#use-cases-and-workarounds>`_ for further information.
+
 All these services allow you to run Airflow with :doc:`CeleryExecutor </executor/celery>`. For more information, see :doc:`/concepts/overview`.
 
 Some directories in the container are mounted, which means that their contents are synchronized between your computer and the container.
@@ -322,7 +324,7 @@ runtime user id which is unknown at the time of building the image.
     functionality - only added confusion - so it has been removed.
 
 
-Those additional variables are useful in case you are trying out/testing Airflow installation via docker compose.
+Those additional variables are useful in case you are trying out/testing Airflow installation via Docker Compose.
 They are not intended to be used in production, but they make the environment faster to bootstrap for first time
 users with the most common customizations.
 

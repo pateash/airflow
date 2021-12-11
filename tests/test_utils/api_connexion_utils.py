@@ -76,19 +76,27 @@ def create_role(app, name, permissions=None):
         permissions = []
     for permission in permissions:
         perm_object = appbuilder.sm.get_permission(*permission)
-        appbuilder.sm.add_permission_role(role, perm_object)
+        appbuilder.sm.add_permission_to_role(role, perm_object)
     return role
 
 
+def set_user_single_role(app, username, role_name):
+    role = create_role(app, role_name)
+    user = app.appbuilder.sm.find_user(username)
+    if role not in user.roles:
+        user.roles = [role]
+        app.appbuilder.sm.update_user(user)
+
+
 def delete_role(app, name):
-    if app.appbuilder.sm.find_role(name):
-        app.appbuilder.sm.delete_role(name)
+    if name not in EXISTING_ROLES:
+        if app.appbuilder.sm.find_role(name):
+            app.appbuilder.sm.delete_role(name)
 
 
 def delete_roles(app):
     for role in app.appbuilder.sm.get_all_roles():
-        if role.name not in EXISTING_ROLES:
-            app.appbuilder.sm.delete_role(role.name)
+        delete_role(app, role.name)
 
 
 def delete_user(app, username):

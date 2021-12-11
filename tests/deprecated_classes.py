@@ -220,23 +220,23 @@ HOOKS = [
         'airflow.contrib.hooks.fs_hook.FSHook',
     ),
     (
-        'airflow.providers.microsoft.azure.hooks.azure_container_instance.AzureContainerInstanceHook',
+        'airflow.providers.microsoft.azure.hooks.container_instance.AzureContainerInstanceHook',
         'airflow.contrib.hooks.azure_container_instance_hook.AzureContainerInstanceHook',
     ),
     (
-        'airflow.providers.microsoft.azure.hooks.azure_container_registry.AzureContainerRegistryHook',
+        'airflow.providers.microsoft.azure.hooks.container_registry.AzureContainerRegistryHook',
         'airflow.contrib.hooks.azure_container_registry_hook.AzureContainerRegistryHook',
     ),
     (
-        'airflow.providers.microsoft.azure.hooks.azure_container_volume.AzureContainerVolumeHook',
+        'airflow.providers.microsoft.azure.hooks.container_volume.AzureContainerVolumeHook',
         'airflow.contrib.hooks.azure_container_volume_hook.AzureContainerVolumeHook',
     ),
     (
-        'airflow.providers.microsoft.azure.hooks.azure_cosmos.AzureCosmosDBHook',
+        'airflow.providers.microsoft.azure.hooks.cosmos.AzureCosmosDBHook',
         'airflow.contrib.hooks.azure_cosmos_hook.AzureCosmosDBHook',
     ),
     (
-        'airflow.providers.microsoft.azure.hooks.azure_fileshare.AzureFileShareHook',
+        'airflow.providers.microsoft.azure.hooks.fileshare.AzureFileShareHook',
         'airflow.contrib.hooks.azure_fileshare_hook.AzureFileShareHook',
     ),
     (
@@ -1028,12 +1028,11 @@ OPERATORS = [
         'airflow.contrib.operators.adls_list_operator.AzureDataLakeStorageListOperator',
     ),
     (
-        'airflow.providers.microsoft.azure.operators'
-        '.azure_container_instances.AzureContainerInstancesOperator',
+        'airflow.providers.microsoft.azure.operators.container_instances.AzureContainerInstancesOperator',
         'airflow.contrib.operators.azure_container_instances_operator.AzureContainerInstancesOperator',
     ),
     (
-        'airflow.providers.microsoft.azure.operators.azure_cosmos.AzureCosmosInsertDocumentOperator',
+        'airflow.providers.microsoft.azure.operators.cosmos.AzureCosmosInsertDocumentOperator',
         'airflow.contrib.operators.azure_cosmos_operator.AzureCosmosInsertDocumentOperator',
     ),
     (
@@ -1344,6 +1343,14 @@ OPERATORS = [
         "airflow.operators.dummy.DummyOperator",
         "airflow.operators.dummy_operator.DummyOperator",
     ),
+    (
+        "airflow.providers.amazon.aws.operators.ec2.EC2StartInstanceOperator",
+        "airflow.providers.amazon.aws.operators.ec2_start_instance.EC2StartInstanceOperator",
+    ),
+    (
+        "airflow.providers.amazon.aws.operators.ec2.EC2StopInstanceOperator",
+        "airflow.providers.amazon.aws.operators.ec2_stop_instance.EC2StopInstanceOperator",
+    ),
 ]
 
 SECRETS = [
@@ -1586,6 +1593,10 @@ SENSORS = [
     (
         'airflow.providers.sftp.sensors.sftp.SFTPSensor',
         'airflow.contrib.sensors.sftp_sensor.SFTPSensor',
+    ),
+    (
+        'airflow.providers.amazon.aws.sensors.ec2.EC2InstanceStateSensor',
+        'airflow.providers.amazon.aws.sensors.ec2_instance_state.EC2InstanceStateSensor',
     ),
 ]
 

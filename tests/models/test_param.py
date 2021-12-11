@@ -31,15 +31,25 @@ class TestParam(unittest.TestCase):
         p = Param('test')
         assert p.resolve() == 'test'
 
-        p.default = 10
+        p.value = 10
         assert p.resolve() == 10
 
     def test_null_param(self):
         p = Param()
+        with pytest.raises(TypeError, match='No value passed and Param has no default value'):
+            p.resolve()
+        assert p.resolve(None) is None
+
+        p = Param(None)
         assert p.resolve() is None
+        assert p.resolve(None) is None
 
         p = Param(type="null")
+        p = Param(None, type='null')
         assert p.resolve() is None
+        assert p.resolve(None) is None
+        with pytest.raises(ValueError):
+            p.resolve('test')
 
     def test_string_param(self):
         p = Param('test', type='string')
@@ -51,8 +61,10 @@ class TestParam(unittest.TestCase):
         p = Param('10.0.0.0', type='string', format='ipv4')
         assert p.resolve() == '10.0.0.0'
 
+        p = Param(type='string')
         with pytest.raises(ValueError):
-            p = Param(type='string')
+            p.resolve(None)
+        with pytest.raises(TypeError, match='No value passed and Param has no default value'):
             p.resolve()
 
     def test_int_param(self):
@@ -96,7 +108,7 @@ class TestParam(unittest.TestCase):
         p = Param('abc', type='string', minLength=2, maxLength=4)
         assert p.resolve() == 'abc'
 
-        p.default = 'long_string'
+        p.value = 'long_string'
         assert p.resolve(suppress_exception=True) is None
 
     def test_explicit_schema(self):
@@ -115,24 +127,37 @@ class TestParam(unittest.TestCase):
         with pytest.raises(ValueError):
             p = S3Param("file://not_valid/s3_path")
 
+    def test_value_saved(self):
+        p = Param("hello", type="string")
+        assert p.resolve("world") == "world"
+        assert p.resolve() == "world"
 
-class TestParamsDict(unittest.TestCase):
+    def test_dump(self):
+        p = Param('hello', description='world', type='string', minLength=2)
+        dump = p.dump()
+        assert dump['__class'] == 'airflow.models.param.Param'
+        assert dump['value'] == 'hello'
+        assert dump['description'] == 'world'
+        assert dump['schema'] == {'type': 'string', 'minLength': 2}
+
+
+class TestParamsDict:
     def test_params_dict(self):
         # Init with a simple dictionary
         pd = ParamsDict(dict_obj={'key': 'value'})
-        assert pd.get('key').__class__ == Param
+        assert isinstance(pd.get_param('key'), Param)
         assert pd['key'] == 'value'
         assert pd.suppress_exception is False
 
         # Init with a dict which contains Param objects
         pd2 = ParamsDict({'key': Param('value', type='string')}, suppress_exception=True)
-        assert pd2.get('key').__class__ == Param
+        assert isinstance(pd2.get_param('key'), Param)
         assert pd2['key'] == 'value'
         assert pd2.suppress_exception is True
 
         # Init with another object of another ParamsDict
         pd3 = ParamsDict(pd2)
-        assert pd3.get('key').__class__ == Param
+        assert isinstance(pd3.get_param('key'), Param)
         assert pd3['key'] == 'value'
         assert pd3.suppress_exception is False  # as it's not a deepcopy of pd2
 
@@ -142,17 +167,27 @@ class TestParamsDict(unittest.TestCase):
         assert pd3.dump() == {'key': 'value'}
 
         # Validate the ParamsDict
-        pd.validate()
+        plain_dict = pd.validate()
+        assert type(plain_dict) == dict
         pd2.validate()
         pd3.validate()
 
         # Update the ParamsDict
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r'Invalid input for param key: 1 is not'):
             pd3['key'] = 1
 
         # Should not raise an error as suppress_exception is True
         pd2['key'] = 1
         pd2.validate()
+
+    def test_update(self):
+        pd = ParamsDict({'key': Param('value', type='string')})
+
+        pd.update({'key': 'a'})
+        internal_value = pd.get_param('key')
+        assert isinstance(internal_value, Param)
+        with pytest.raises(ValueError, match=r'Invalid input for param key: 1 is not'):
+            pd.update({'key': 1})
 
 
 class TestDagParamRuntime:

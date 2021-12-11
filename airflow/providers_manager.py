@@ -37,20 +37,12 @@ from airflow.utils.entry_points import entry_points_with_dist
 from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow.utils.module_loading import import_string
 
-try:
-    import importlib.resources as importlib_resources
-except ImportError:
-    # Try back-ported to PY<37 `importlib_resources`.
-    import importlib_resources
-
 log = logging.getLogger(__name__)
 
 if sys.version_info >= (3, 9):
-    from functools import cache
+    from importlib.resources import files as resource_files
 else:
-    from functools import lru_cache
-
-    cache = lru_cache(maxsize=None)
+    from importlib_resources import files as resource_files
 
 MIN_PROVIDER_VERSIONS = {
     "apache-airflow-providers-celery": "2.1.0",
@@ -102,7 +94,8 @@ class LazyDictWithCache(MutableMapping):
 
 def _create_provider_info_schema_validator():
     """Creates JSON schema validator from the provider_info.schema.json"""
-    schema = json.loads(importlib_resources.read_text('airflow', 'provider_info.schema.json'))
+    with resource_files("airflow").joinpath("provider_info.schema.json").open("rb") as f:
+        schema = json.load(f)
     cls = jsonschema.validators.validator_for(schema)
     validator = cls(schema)
     return validator
@@ -110,9 +103,8 @@ def _create_provider_info_schema_validator():
 
 def _create_customized_form_field_behaviours_schema_validator():
     """Creates JSON schema validator from the customized_form_field_behaviours.schema.json"""
-    schema = json.loads(
-        importlib_resources.read_text('airflow', 'customized_form_field_behaviours.schema.json')
-    )
+    with resource_files("airflow").joinpath("customized_form_field_behaviours.schema.json").open("rb") as f:
+        schema = json.load(f)
     cls = jsonschema.validators.validator_for(schema)
     validator = cls(schema)
     return validator
@@ -148,6 +140,16 @@ def _sanity_check(provider_package: str, class_name: str) -> bool:
         return False
     try:
         import_string(class_name)
+    except ImportError as e:
+        # When there is an ImportError we turn it into debug warnings as this is
+        # an expected case when only some providers are installed
+        log.debug(
+            "Exception when importing '%s' from '%s' package: %s",
+            class_name,
+            provider_package,
+            e,
+        )
+        return False
     except Exception as e:
         log.warning(
             "Exception when importing '%s' from '%s' package: %s",
@@ -181,6 +183,7 @@ class HookInfo(NamedTuple):
     package_name: str
     hook_name: str
     connection_type: str
+    connection_testable: bool
 
 
 class ConnectionFormWidgetInfo(NamedTuple):
@@ -649,16 +652,6 @@ class ProvidersManager(LoggingMixin):
                 field_behaviours = hook_class.get_ui_field_behaviour()
                 if field_behaviours:
                     self._add_customized_fields(package_name, hook_class, field_behaviours)
-        except ImportError as e:
-            # When there is an ImportError we turn it into debug warnings as this is
-            # an expected case when only some providers are installed
-            log.debug(
-                "Exception when importing '%s' from '%s' package: %s",
-                hook_class_name,
-                package_name,
-                e,
-            )
-            return None
         except Exception as e:
             log.warning(
                 "Exception when importing '%s' from '%s' package: %s",
@@ -699,6 +692,7 @@ class ProvidersManager(LoggingMixin):
             package_name=package_name,
             hook_name=hook_name,
             connection_type=connection_type,
+            connection_testable=hasattr(hook_class, 'test_connection'),
         )
 
     def _add_widgets(self, package_name: str, hook_class: type, widgets: Dict[str, Any]):

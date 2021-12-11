@@ -30,7 +30,9 @@ from airflow import PY37, settings
 from airflow.cli.commands.legacy_commands import check_legacy_command
 from airflow.configuration import conf
 from airflow.exceptions import AirflowException
+from airflow.executors import celery_executor, celery_kubernetes_executor
 from airflow.executors.executor_constants import CELERY_EXECUTOR, CELERY_KUBERNETES_EXECUTOR
+from airflow.executors.executor_loader import ExecutorLoader
 from airflow.utils.cli import ColorMode
 from airflow.utils.helpers import partition
 from airflow.utils.module_loading import import_string
@@ -60,10 +62,17 @@ class DefaultHelpParser(argparse.ArgumentParser):
         if action.dest == 'subcommand' and value == 'celery':
             executor = conf.get('core', 'EXECUTOR')
             if executor not in (CELERY_EXECUTOR, CELERY_KUBERNETES_EXECUTOR):
-                message = (
-                    f'celery subcommand works only with CeleryExecutor, your current executor: {executor}'
-                )
-                raise ArgumentError(action, message)
+                executor_cls, _ = ExecutorLoader.import_executor_cls(executor)
+                if not issubclass(
+                    executor_cls,
+                    (celery_executor.CeleryExecutor, celery_kubernetes_executor.CeleryKubernetesExecutor),
+                ):
+                    message = (
+                        f'celery subcommand works only with CeleryExecutor, CeleryKubernetesExecutor and '
+                        f'executors derived from them, your current executor: {executor}, subclassed from: '
+                        f'{", ".join([base_cls.__qualname__ for base_cls in executor_cls.__bases__])}'
+                    )
+                    raise ArgumentError(action, message)
         if action.dest == 'subcommand' and value == 'kubernetes':
             try:
                 import kubernetes.client  # noqa: F401
@@ -439,7 +448,7 @@ ARG_MIGRATION_TIMEOUT = Arg(
     ("-t", "--migration-wait-timeout"),
     help="timeout to wait for db to migrate ",
     type=int,
-    default=0,
+    default=60,
 )
 
 # webserver
@@ -694,6 +703,13 @@ ARG_SKIP_SERVE_LOGS = Arg(
     help="Don't start the serve logs process along with the workers",
     action="store_true",
 )
+ARG_ROLE_IMPORT = Arg(("file",), help="Import roles from JSON file", nargs=None)
+ARG_ROLE_EXPORT = Arg(("file",), help="Export all roles to JSON file", nargs=None)
+ARG_ROLE_EXPORT_FMT = Arg(
+    ('-p', '--pretty'),
+    help='Format output JSON file by sorting role names and indenting by 4 spaces',
+    action='store_true',
+)
 
 # info
 ARG_ANONYMIZE = Arg(
@@ -725,7 +741,7 @@ ARG_NAMESPACE = Arg(
 # jobs check
 ARG_JOB_TYPE_FILTER = Arg(
     ('--job-type',),
-    choices=('BackfillJob', 'LocalTaskJob', 'SchedulerJob'),
+    choices=('BackfillJob', 'LocalTaskJob', 'SchedulerJob', 'TriggererJob'),
     action='store',
     help='The type of job(s) that will be checked.',
 )
@@ -762,6 +778,13 @@ ARG_CAPACITY = Arg(
     help="The maximum number of triggers that a Triggerer will run at one time.",
 )
 
+# reserialize
+ARG_CLEAR_ONLY = Arg(
+    ("--clear-only",),
+    action="store_true",
+    help="If passed, serialized DAGs will be cleared but not reserialized.",
+)
+
 ALTERNATIVE_CONN_SPECS_ARGS = [
     ARG_CONN_TYPE,
     ARG_CONN_DESCRIPTION,
@@ -795,7 +818,6 @@ class GroupCommand(NamedTuple):
 
 
 CLICommand = Union[ActionCommand, GroupCommand]
-
 
 DAGS_COMMANDS = (
     ActionCommand(
@@ -906,6 +928,33 @@ DAGS_COMMANDS = (
         ),
     ),
     ActionCommand(
+        name='show-dependencies',
+        help="Displays DAGs with their dependencies",
+        description=(
+            "The --imgcat option only works in iTerm.\n"
+            "\n"
+            "For more information, see: https://www.iterm2.com/documentation-images.html\n"
+            "\n"
+            "The --save option saves the result to the indicated file.\n"
+            "\n"
+            "The file format is determined by the file extension. "
+            "For more information about supported "
+            "format, see: https://www.graphviz.org/doc/info/output.html\n"
+            "\n"
+            "If you want to create a PNG file then you should execute the following command:\n"
+            "airflow dags show-dependencies --save output.png\n"
+            "\n"
+            "If you want to create a DOT file then you should execute the following command:\n"
+            "airflow dags show-dependencies --save output.dot\n"
+        ),
+        func=lazy_load_command('airflow.cli.commands.dag_command.dag_dependencies_show'),
+        args=(
+            ARG_SUBDIR,
+            ARG_SAVE,
+            ARG_IMGCAT,
+        ),
+    ),
+    ActionCommand(
         name='backfill',
         help="Run subsections of a DAG for a specified date range",
         description=(
@@ -969,6 +1018,17 @@ DAGS_COMMANDS = (
             ARG_IMGCAT_DAGRUN,
             ARG_SAVE_DAGRUN,
         ),
+    ),
+    ActionCommand(
+        name='reserialize',
+        help="Reserialize all DAGs by parsing the DagBag files",
+        description=(
+            "Drop all serialized dags from the metadata DB. This will cause all DAGs to be reserialized "
+            "from the DagBag folder. This can be helpful if your serialized DAGs get out of sync with the "
+            "version of Airflow that you are running."
+        ),
+        func=lazy_load_command('airflow.cli.commands.dag_command.dag_reserialize'),
+        args=(ARG_CLEAR_ONLY,),
     ),
 )
 TASKS_COMMANDS = (
@@ -1380,6 +1440,18 @@ ROLES_COMMANDS = (
         help='Create role',
         func=lazy_load_command('airflow.cli.commands.role_command.roles_create'),
         args=(ARG_ROLES, ARG_VERBOSE),
+    ),
+    ActionCommand(
+        name='export',
+        help='Export roles (without permissions) from db to JSON file',
+        func=lazy_load_command('airflow.cli.commands.role_command.roles_export'),
+        args=(ARG_ROLE_EXPORT, ARG_ROLE_EXPORT_FMT, ARG_VERBOSE),
+    ),
+    ActionCommand(
+        name='import',
+        help='Import roles (without permissions) from JSON file to db',
+        func=lazy_load_command('airflow.cli.commands.role_command.roles_import'),
+        args=(ARG_ROLE_IMPORT, ARG_VERBOSE),
     ),
 )
 

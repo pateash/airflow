@@ -948,7 +948,7 @@ class BigQueryCreateEmptyTableOperator(BaseOperator):
                 delegate_to=self.delegate_to,
                 impersonation_chain=self.impersonation_chain,
             )
-            schema_fields = json.loads(gcs_hook.download(gcs_bucket, gcs_object))
+            schema_fields = json.loads(gcs_hook.download(gcs_bucket, gcs_object).decode("utf-8"))
         else:
             schema_fields = self.schema_fields
 
@@ -1089,8 +1089,8 @@ class BigQueryCreateExternalTableOperator(BaseOperator):
     def __init__(
         self,
         *,
-        bucket: str,
-        source_objects: List,
+        bucket: Optional[str] = None,
+        source_objects: Optional[List] = None,
         destination_project_dataset_table: str = None,
         table_resource: Optional[Dict[str, Any]] = None,
         schema_fields: Optional[List] = None,
@@ -1142,11 +1142,14 @@ class BigQueryCreateExternalTableOperator(BaseOperator):
         if not table_resource:
             warnings.warn(
                 "Passing table parameters via keywords arguments will be deprecated. "
-                "Please use provide table definition using `table_resource` parameter."
-                "You can still use external `schema_object`. ",
+                "Please provide table definition using `table_resource` parameter.",
                 DeprecationWarning,
                 stacklevel=2,
             )
+            if not bucket:
+                raise ValueError("`bucket` is required when not using `table_resource`.")
+            if not source_objects:
+                raise ValueError("`source_objects` is required when not using `table_resource`.")
             if not source_format:
                 source_format = 'CSV'
             if not compression:
@@ -1200,7 +1203,7 @@ class BigQueryCreateExternalTableOperator(BaseOperator):
                 delegate_to=self.delegate_to,
                 impersonation_chain=self.impersonation_chain,
             )
-            schema_fields = json.loads(gcs_hook.download(self.bucket, self.schema_object))
+            schema_fields = json.loads(gcs_hook.download(self.bucket, self.schema_object).decode("utf-8"))
         else:
             schema_fields = self.schema_fields
 

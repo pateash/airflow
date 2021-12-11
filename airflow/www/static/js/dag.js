@@ -227,6 +227,10 @@ export function callModalDag(dag) {
     dag_id: dag && dag.dag_id,
     execution_date: dag && dag.execution_date,
   });
+  updateButtonUrl(buttons.dagrun_details, {
+    dag_id: dag && dag.dag_id,
+    run_id: dag && dag.run_id,
+  });
 }
 
 // Task Instance Modal actions
@@ -279,10 +283,12 @@ $('#pause_resume').on('change', function onChange() {
 $('#next-run').on('mouseover', () => {
   $('#next-run').attr('data-original-title', () => {
     let newTitle = '';
-    newTitle += `<strong>Run After:</strong> ${formatDateTime(nextRun.createAfter)}<br><br>`;
-    newTitle += '<strong>Data Interval</strong><br>';
-    newTitle += `Start: ${formatDateTime(nextRun.intervalStart)}<br>`;
-    newTitle += `End: ${formatDateTime(nextRun.intervalEnd)}`;
+    if (nextRun.createAfter) newTitle += `<strong>Run After:</strong> ${formatDateTime(nextRun.createAfter)}<br><br>`;
+    if (nextRun.intervalStart && nextRun.intervalEnd) {
+      newTitle += '<strong>Data Interval</strong><br>';
+      newTitle += `Start: ${formatDateTime(nextRun.intervalStart)}<br>`;
+      newTitle += `End: ${formatDateTime(nextRun.intervalEnd)}`;
+    }
     return newTitle;
   });
 });

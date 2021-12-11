@@ -46,7 +46,7 @@ from airflow.exceptions import AirflowException, DuplicateTaskIdFound
 from airflow.models import DAG, DagModel, DagRun, DagTag, TaskFail, TaskInstance as TI
 from airflow.models.baseoperator import BaseOperator
 from airflow.models.dag import dag as dag_decorator
-from airflow.models.param import DagParam, Param
+from airflow.models.param import DagParam, Param, ParamsDict
 from airflow.operators.bash import BashOperator
 from airflow.operators.dummy import DummyOperator
 from airflow.operators.subdag import SubDagOperator
@@ -115,7 +115,7 @@ class TestDag(unittest.TestCase):
         """
         dag = models.DAG('test-dag')
 
-        assert isinstance(dag.params, dict)
+        assert isinstance(dag.params, ParamsDict)
         assert 0 == len(dag.params)
 
     def test_params_passed_and_params_in_default_args_no_override(self):
@@ -726,7 +726,7 @@ class TestDag(unittest.TestCase):
         clear_db_dags()
         dags = [DAG(f'dag-bulk-sync-{i}', start_date=DEFAULT_DATE, tags=["test-dag"]) for i in range(0, 4)]
 
-        with assert_queries_count(4):
+        with assert_queries_count(5):
             DAG.bulk_write_to_db(dags)
         with create_session() as session:
             assert {'dag-bulk-sync-0', 'dag-bulk-sync-1', 'dag-bulk-sync-2', 'dag-bulk-sync-3'} == {
@@ -743,14 +743,14 @@ class TestDag(unittest.TestCase):
                 assert row[0] is not None
 
         # Re-sync should do fewer queries
-        with assert_queries_count(3):
+        with assert_queries_count(4):
             DAG.bulk_write_to_db(dags)
-        with assert_queries_count(3):
+        with assert_queries_count(4):
             DAG.bulk_write_to_db(dags)
         # Adding tags
         for dag in dags:
             dag.tags.append("test-dag2")
-        with assert_queries_count(4):
+        with assert_queries_count(5):
             DAG.bulk_write_to_db(dags)
         with create_session() as session:
             assert {'dag-bulk-sync-0', 'dag-bulk-sync-1', 'dag-bulk-sync-2', 'dag-bulk-sync-3'} == {
@@ -769,7 +769,7 @@ class TestDag(unittest.TestCase):
         # Removing tags
         for dag in dags:
             dag.tags.remove("test-dag")
-        with assert_queries_count(4):
+        with assert_queries_count(5):
             DAG.bulk_write_to_db(dags)
         with create_session() as session:
             assert {'dag-bulk-sync-0', 'dag-bulk-sync-1', 'dag-bulk-sync-2', 'dag-bulk-sync-3'} == {
@@ -785,7 +785,8 @@ class TestDag(unittest.TestCase):
             for row in session.query(DagModel.last_parsed_time).all():
                 assert row[0] is not None
 
-    def test_bulk_write_to_db_max_active_runs(self):
+    @parameterized.expand([State.RUNNING, State.QUEUED])
+    def test_bulk_write_to_db_max_active_runs(self, state):
         """
         Test that DagModel.next_dagrun_create_after is set to NULL when the dag cannot be created due to max
         active runs being hit.
@@ -805,7 +806,7 @@ class TestDag(unittest.TestCase):
         assert model.next_dagrun_create_after == DEFAULT_DATE + timedelta(days=1)
 
         dr = dag.create_dagrun(
-            state=State.RUNNING,
+            state=state,
             execution_date=model.next_dagrun,
             run_type=DagRunType.SCHEDULED,
             session=session,
@@ -814,9 +815,43 @@ class TestDag(unittest.TestCase):
         DAG.bulk_write_to_db([dag])
 
         model = session.query(DagModel).get((dag.dag_id,))
-        assert model.next_dagrun == DEFAULT_DATE + timedelta(days=1)
-        # Next dagrun after is not None because the dagrun would be in queued state
-        assert model.next_dagrun_create_after is not None
+        # We signal "at max active runs" by saying this run is never eligible to be created
+        assert model.next_dagrun_create_after is None
+        # test that bulk_write_to_db again doesn't update next_dagrun_create_after
+        DAG.bulk_write_to_db([dag])
+        model = session.query(DagModel).get((dag.dag_id,))
+        assert model.next_dagrun_create_after is None
+
+    def test_bulk_write_to_db_has_import_error(self):
+        """
+        Test that DagModel.has_import_error is set to false if no import errors.
+        """
+        dag = DAG(dag_id='test_has_import_error', start_date=DEFAULT_DATE)
+
+        DummyOperator(task_id='dummy', dag=dag, owner='airflow')
+
+        session = settings.Session()
+        dag.clear()
+        DAG.bulk_write_to_db([dag], session)
+
+        model = session.query(DagModel).get((dag.dag_id,))
+
+        assert not model.has_import_errors
+
+        # Simulate Dagfileprocessor setting the import error to true
+        model.has_import_errors = True
+        session.merge(model)
+        session.flush()
+        model = session.query(DagModel).get((dag.dag_id,))
+        # assert
+        assert model.has_import_errors
+        # parse
+        DAG.bulk_write_to_db([dag])
+
+        model = session.query(DagModel).get((dag.dag_id,))
+        # assert that has_import_error is now false
+        assert not model.has_import_errors
+        session.close()
 
     def test_sync_to_db(self):
         dag = DAG(
@@ -831,7 +866,6 @@ class TestDag(unittest.TestCase):
             )
             # parent_dag and is_subdag was set by DagBag. We don't use DagBag, so this value is not set.
             subdag.parent_dag = dag
-            subdag.is_subdag = True
             SubDagOperator(task_id='subtask', owner='owner2', subdag=subdag)
         session = settings.Session()
         dag.sync_to_db(session=session)
@@ -897,7 +931,6 @@ class TestDag(unittest.TestCase):
 
         # parent_dag and is_subdag was set by DagBag. We don't use DagBag, so this value is not set.
         subdag.parent_dag = dag
-        subdag.is_subdag = True
 
         session.query(DagModel).filter(DagModel.dag_id.in_([subdag_id, dag_id])).delete(
             synchronize_session=False
@@ -1365,7 +1398,7 @@ class TestDag(unittest.TestCase):
 
     @parameterized.expand(
         [
-            (State.NONE,),
+            (State.QUEUED,),
             (State.RUNNING,),
         ]
     )
@@ -1422,7 +1455,6 @@ class TestDag(unittest.TestCase):
         SubDagOperator(task_id='test', subdag=subdag, dag=dag)
         t_2 = DummyOperator(task_id='task', dag=subdag)
         subdag.parent_dag = dag
-        subdag.is_subdag = True
 
         dag.sync_to_db()
 
@@ -1450,7 +1482,7 @@ class TestDag(unittest.TestCase):
 
     @parameterized.expand(
         [
-            (State.NONE,),
+            (State.QUEUED,),
             (State.RUNNING,),
         ]
     )
@@ -1480,7 +1512,7 @@ class TestDag(unittest.TestCase):
 
     @parameterized.expand(
         [
-            (State.NONE,),
+            (State.QUEUED,),
             (State.RUNNING,),
         ]
     )
@@ -1509,8 +1541,8 @@ class TestDag(unittest.TestCase):
 
     @parameterized.expand(
         [(state, State.NONE) for state in State.task_states if state != State.RUNNING]
-        + [(State.RUNNING, State.RESTARTING)]
-    )  # type: ignore
+        + [(State.RUNNING, State.RESTARTING)]  # type: ignore
+    )
     def test_clear_dag(self, ti_state_begin, ti_state_end: Optional[str]):
         dag_id = 'test_clear_dag'
         self._clean_up(dag_id)
@@ -1801,7 +1833,6 @@ class TestDag(unittest.TestCase):
         subdag = section_1.subdag
         # parent_dag and is_subdag was set by DagBag. We don't use DagBag, so this value is not set.
         subdag.parent_dag = dag
-        subdag.is_subdag = True
 
         next_parent_info = dag.next_dagrun_info(None)
         assert next_parent_info.logical_date == timezone.datetime(2019, 1, 1, 0, 0)
@@ -1829,13 +1860,29 @@ class TestDag(unittest.TestCase):
 
     def test_validate_params_on_trigger_dag(self):
         dag = models.DAG('dummy-dag', schedule_interval=None, params={'param1': Param(type="string")})
-
-        with pytest.raises(ValueError, match="Invalid input for param param1: None is not of type 'string'"):
+        with pytest.raises(TypeError, match="No value passed and Param has no default value"):
             dag.create_dagrun(
                 run_id="test_dagrun_missing_param",
                 state=State.RUNNING,
                 execution_date=TEST_DATE,
             )
+
+        dag = models.DAG('dummy-dag', schedule_interval=None, params={'param1': Param(type="string")})
+        with pytest.raises(ValueError, match="Invalid input for param param1: None is not of type 'string'"):
+            dag.create_dagrun(
+                run_id="test_dagrun_missing_param",
+                state=State.RUNNING,
+                execution_date=TEST_DATE,
+                conf={"param1": None},
+            )
+
+        dag = models.DAG('dummy-dag', schedule_interval=None, params={'param1': Param(type="string")})
+        dag.create_dagrun(
+            run_id="test_dagrun_missing_param",
+            state=State.RUNNING,
+            execution_date=TEST_DATE,
+            conf={"param1": "hello"},
+        )
 
 
 class TestDagModel:
@@ -1873,9 +1920,10 @@ class TestDagModel:
             next_dagrun_create_after=None,
             is_active=True,
         )
+        # assert max_active_runs updated
+        assert orm_dag.max_active_runs == 16
         session.add(orm_dag)
         session.flush()
-
         assert orm_dag.max_active_runs is not None
 
         session.rollback()
@@ -1910,6 +1958,33 @@ class TestDagModel:
 
         session.rollback()
         session.close()
+
+    def test_dags_needing_dagruns_doesnot_send_dagmodel_with_import_errors(self, session):
+        """
+        We check that has_import_error is false for dags
+        being set to scheduler to create dagruns
+        """
+        dag = DAG(dag_id='test_dags', start_date=DEFAULT_DATE)
+        DummyOperator(task_id='dummy', dag=dag, owner='airflow')
+
+        orm_dag = DagModel(
+            dag_id=dag.dag_id,
+            has_task_concurrency_limits=False,
+            next_dagrun=DEFAULT_DATE,
+            next_dagrun_create_after=DEFAULT_DATE + timedelta(days=1),
+            is_active=True,
+        )
+        assert not orm_dag.has_import_errors
+        session.add(orm_dag)
+        session.flush()
+
+        needed = DagModel.dags_needing_dagruns(session).all()
+        assert needed == [orm_dag]
+        orm_dag.has_import_errors = True
+        session.merge(orm_dag)
+        session.flush()
+        needed = DagModel.dags_needing_dagruns(session).all()
+        assert needed == []
 
     @pytest.mark.parametrize(
         ('fileloc', 'expected_relative'),
@@ -2244,3 +2319,40 @@ def test_iter_dagrun_infos_between_error(caplog):
         ),
     ]
     assert caplog.records[0].exc_info is not None, "should contain exception context"
+
+
+@pytest.mark.parametrize(
+    "logical_date, data_interval_start, data_interval_end, expected_data_interval",
+    [
+        pytest.param(None, None, None, None, id="no-next-run"),
+        pytest.param(
+            DEFAULT_DATE,
+            DEFAULT_DATE,
+            DEFAULT_DATE + timedelta(days=2),
+            DataInterval(DEFAULT_DATE, DEFAULT_DATE + timedelta(days=2)),
+            id="modern",
+        ),
+        pytest.param(
+            DEFAULT_DATE,
+            None,
+            None,
+            DataInterval(DEFAULT_DATE, DEFAULT_DATE + timedelta(days=1)),
+            id="legacy",
+        ),
+    ],
+)
+def test_get_next_data_interval(
+    logical_date,
+    data_interval_start,
+    data_interval_end,
+    expected_data_interval,
+):
+    dag = DAG(dag_id="test_get_next_data_interval", schedule_interval="@daily")
+    dag_model = DagModel(
+        dag_id="test_get_next_data_interval",
+        next_dagrun=logical_date,
+        next_dagrun_data_interval_start=data_interval_start,
+        next_dagrun_data_interval_end=data_interval_end,
+    )
+
+    assert dag.get_next_data_interval(dag_model) == expected_data_interval

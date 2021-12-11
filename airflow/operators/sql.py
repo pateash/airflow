@@ -15,7 +15,6 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from distutils.util import strtobool
 from typing import Any, Dict, Iterable, List, Mapping, Optional, SupportsAbs, Union
 
 from airflow.compat.functools import cached_property
@@ -23,6 +22,19 @@ from airflow.exceptions import AirflowException
 from airflow.hooks.base import BaseHook
 from airflow.hooks.dbapi import DbApiHook
 from airflow.models import BaseOperator, SkipMixin
+
+
+def parse_boolean(val: str) -> Union[str, bool]:
+    """Try to parse a string into boolean.
+
+    Raises ValueError if the input is not a valid true- or false-like string value.
+    """
+    val = val.lower()
+    if val in ('y', 'yes', 't', 'true', 'on', '1'):
+        return True
+    if val in ('n', 'no', 'f', 'false', 'off', '0'):
+        return False
+    raise ValueError(f"{val!r} is not a boolean-like string value")
 
 
 class BaseSQLOperator(BaseOperator):
@@ -34,10 +46,18 @@ class BaseSQLOperator(BaseOperator):
     You can custom the behavior by overriding the .get_db_hook() method.
     """
 
-    def __init__(self, *, conn_id: Optional[str] = None, database: Optional[str] = None, **kwargs):
+    def __init__(
+        self,
+        *,
+        conn_id: Optional[str] = None,
+        database: Optional[str] = None,
+        hook_params: Optional[Dict] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.conn_id = conn_id
         self.database = database
+        self.hook_params = {} if hook_params is None else hook_params
 
     @cached_property
     def _hook(self):
@@ -45,7 +65,7 @@ class BaseSQLOperator(BaseOperator):
         self.log.debug("Get connection for %s", self.conn_id)
         conn = BaseHook.get_connection(self.conn_id)
 
-        hook = conn.get_hook()
+        hook = conn.get_hook(hook_params=self.hook_params)
         if not isinstance(hook, DbApiHook):
             raise AirflowException(
                 f'The connection type is not supported by {self.__class__.__name__}. '
@@ -465,16 +485,16 @@ class SQLThresholdCheckOperator(BaseSQLOperator):
 
 class BranchSQLOperator(BaseSQLOperator, SkipMixin):
     """
-    Executes sql code in a specific database
+    Allows a DAG to "branch" or follow a specified path based on the results of a SQL query.
 
-    :param sql: the sql code to be executed. (templated)
+    :param sql: The SQL code to be executed, should return true or false (templated)
     :type sql: Can receive a str representing a sql statement or reference to a template file.
                Template reference are recognized by str ending in '.sql'.
                Expected SQL query to return Boolean (True/False), integer (0 = False, Otherwise = 1)
                or string (true/y/yes/1/on/false/n/no/0/off).
-    :param follow_task_ids_if_true: task id or task ids to follow if query return true
+    :param follow_task_ids_if_true: task id or task ids to follow if query returns true
     :type follow_task_ids_if_true: str or list
-    :param follow_task_ids_if_false: task id or task ids to follow if query return true
+    :param follow_task_ids_if_false: task id or task ids to follow if query returns false
     :type follow_task_ids_if_false: str or list
     :param conn_id: the connection ID used to connect to the database.
     :type conn_id: str
@@ -538,7 +558,7 @@ class BranchSQLOperator(BaseSQLOperator, SkipMixin):
                     follow_branch = self.follow_task_ids_if_true
             elif isinstance(query_result, str):
                 # return result is not Boolean, try to convert from String to Boolean
-                if bool(strtobool(query_result)):
+                if parse_boolean(query_result):
                     follow_branch = self.follow_task_ids_if_true
             elif isinstance(query_result, int):
                 if bool(query_result):
