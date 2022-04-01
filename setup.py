@@ -238,6 +238,12 @@ cgroups = [
     # Cgroupspy 0.2.2 added Python 3.10 compatibility
     'cgroupspy>=0.2.2',
 ]
+clickhouse = [
+    'clickhouse-driver>=0.2.3',
+]
+cloudant = [
+    'cloudant>=2.0',
+]
 dask = [
     # Dask support is limited, we need Dask team to upgrade support for dask if we were to continue
     # Supporting it in the future
@@ -566,6 +572,7 @@ ALL_DB_PROVIDERS = [
     'apache.hive',
     'apache.pinot',
     'arangodb',
+    'clickhouse',
     'cloudant',
     'databricks',
     'exasol',
