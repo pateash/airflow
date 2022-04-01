@@ -252,6 +252,9 @@ cgroups = [
     # Cgroupspy 0.2.2 added Python 3.10 compatibility
     'cgroupspy>=0.2.2',
 ]
+clickhouse = [
+    'clickhouse-driver>=0.2.3',
+]
 cloudant = [
     'cloudant>=2.0',
 ]
@@ -685,6 +688,7 @@ PROVIDERS_REQUIREMENTS: Dict[str, List[str]] = {
     'arangodb': arangodb,
     'asana': asana,
     'celery': celery,
+    'clickhouse': clickhouse,
     'cloudant': cloudant,
     'cncf.kubernetes': kubernetes,
     'databricks': databricks,
@@ -875,6 +879,7 @@ ALL_DB_PROVIDERS = [
     'apache.hive',
     'apache.pinot',
     'arangodb',
+    'clickhouse',
     'cloudant',
     'databricks',
     'exasol',

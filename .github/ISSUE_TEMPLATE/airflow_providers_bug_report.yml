@@ -41,6 +41,7 @@ body:
         - arangodb
         - asana
         - celery
+        - clickhouse
         - cloudant
         - cncf-kubernetes
         - databricks
