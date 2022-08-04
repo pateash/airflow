@@ -69,6 +69,7 @@ Checklicence
 Checkr
 Cinimex
 ClassifyTextResponse
+ClickHouse
 CloudTasksClient
 Cloudant
 Cloudwatch
@@ -613,6 +614,7 @@ classname
 classpath
 classpaths
 cli
+clickhouse
 clientId
 cloudant
 cloudml
