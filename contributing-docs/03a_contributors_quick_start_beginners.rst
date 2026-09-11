@@ -79,7 +79,7 @@ Option A – Breeze on Your Laptop
 
 .. code-block:: bash
 
-    # For IntelliJ IDEA and PyCharm
+    # For IntelliJ IDEA and PyCharm (Please do not run it inside IntelliJ IDEA and PyCharm terminal, as it needs All IDE process to be closed)
     uv run dev/ide_setup/setup_idea.py
 
     # For VS Code
